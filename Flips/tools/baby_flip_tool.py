@@ -340,6 +340,14 @@ def _reorder_columns(df, expected_cols):
     rest = [c for c in df.columns if c not in expected_cols]
     return df[in_expected + rest]
 
+def _to_numeric_if_possible(s: pd.Series):
+    """Try to convert a column to numeric; if mostly numeric, return numeric series, else original."""
+    num = pd.to_numeric(s, errors="coerce")
+    # If at least half of the non-null values are numeric, keep numeric
+    if num.notna().sum() >= max(1, int(s.notna().sum() * 0.5)):
+        return num
+    return s
+
 def write_baby_flip_output_excel(
     output_path: str | Path,
     baby_flip_df_output: pd.DataFrame,
@@ -348,100 +356,127 @@ def write_baby_flip_output_excel(
     baby_flip_df_cleaned_pivot: pd.DataFrame,
     po_df: pd.DataFrame,
     carrier_df: pd.DataFrame,
-    expected_araho_columns: list[str] | None = None,
     invoice_date_col: str = "Invoice Date",
 ) -> Path:
     """
     Sheets:
-      - 'Araho Sheet'       -> baby_flip_df_output (Store -> Column; cleaned; Invoice Date = TODAY() as m/d/yyyy)
+      - 'Araho Sheet'       -> baby_flip_df_output  (Store -> Column; numeric cols written as numbers; Invoice Date = TODAY())
       - 'RD master'         -> baby_flip_df
       - 'RD clean'          -> baby_flip_df_cleaned
       - 'Last Level Master' -> baby_flip_df_cleaned_pivot
-      - 'PO#'               -> po_df (NO header)
-      - 'carriers'          -> carrier_df (NO header)
+      - 'PO#'               -> po_df        (NO header)
+      - 'carriers'          -> carrier_df   (NO header)
     """
     path = Path(output_path)
     if path.suffix.lower() != ".xlsx":
         path = path.with_suffix(".xlsx")
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Require xlsxwriter for formulas + formats
+    # Require xlsxwriter for reliable formatting
     if importlib.util.find_spec("xlsxwriter") is None:
-        raise RuntimeError("Please `pip install xlsxwriter` to write TODAY() with m/d/yyyy format reliably.")
-    engine = "xlsxwriter"
+        engine = "openpyxl"
+    else:
+        engine = "xlsxwriter"
 
-    # ---------- Build Araho ----------
-    df_araho = baby_flip_df_output.copy()
-    df_araho = df_araho.rename(columns=_clean_headers(df_araho))
+    # ---------- Prepare Araho Sheet ----------
+    araho = baby_flip_df_output.copy()
 
-    # Store -> Column (case-insensitive)
-    store_col = next((c for c in df_araho.columns if c.strip().lower() == "store"), None)
+    # Rename Store -> Column (case-insensitive)
+    store_col = next((c for c in araho.columns if str(c).strip().lower() == "store"), None)
     if store_col is not None:
-        df_araho = df_araho.rename(columns={store_col: "Column"})
+        araho = araho.rename(columns={store_col: "Column"})
 
-    # Clean all non-date cells as strings; keep date separate (we’ll overwrite with formulas)
-    for c in df_araho.columns:
-        if c == invoice_date_col:
+    # Identify columns by intended type
+    # Text columns we should NOT force to numeric
+    text_cols = set()
+    # typical names seen in your pipeline
+    for cand in ["PO #", "description", "LOT#", invoice_date_col]:
+        for c in araho.columns:
+            if str(c).strip().lower() == cand.strip().lower():
+                text_cols.add(c)
+
+    # Try to make everything else numeric (so Excel stores numbers as numbers)
+    for c in araho.columns:
+        if c in text_cols:
             continue
-        df_araho[c] = df_araho[c].map(_clean_str)
-
-    # Ensure the date column exists
-    if invoice_date_col not in df_araho.columns:
-        df_araho[invoice_date_col] = ""
-
-    # Drop fully empty rows
-    df_araho = _drop_empty_rows(df_araho)
-
-    # Optional exact header order
-    if expected_araho_columns:
-        df_araho = _reorder_columns(df_araho, expected_araho_columns)
+        araho[c] = _to_numeric_if_possible(araho[c])
 
     with pd.ExcelWriter(path, engine=engine, date_format="m/d/yyyy", datetime_format="m/d/yyyy") as writer:
         # ----- Araho Sheet -----
-        df_araho.to_excel(writer, sheet_name="Araho Sheet", index=False)
+        araho.to_excel(writer, sheet_name="Araho Sheet", index=False)
 
         ws = writer.sheets["Araho Sheet"]
-        wb = writer.book  # <-- FIX: get workbook from writer, not from worksheet
+        # Only create formats if using xlsxwriter
+        if engine == "xlsxwriter":
+            wb = writer.book
+            date_fmt = wb.add_format({"num_format": "m/d/yyyy"})
+            # autosize + set date formulas
+            araho_cols = list(araho.columns)
+            # find the index of invoice date if present
+            date_idx = None
+            for i, c in enumerate(araho_cols):
+                if str(c).strip().lower() == invoice_date_col.strip().lower():
+                    date_idx = i
+                    break
 
-        # Formats
-        text_fmt = wb.add_format({"num_format": "@"})
-        date_fmt = wb.add_format({"num_format": "m/d/yyyy"})
+            # autosize (use header+data lengths)
+            for i, col in enumerate(araho_cols):
+                # Don't force a text format on numeric columns — just autosize
+                try:
+                    max_len = max(len(str(col)), int(araho[col].astype(str).map(len).max() or 0))
+                except Exception:
+                    max_len = len(str(col))
+                ws.set_column(i, i, min(max_len + 2, 60))
 
-        araho_cols = list(df_araho.columns)
-        date_idx = araho_cols.index(invoice_date_col)
+            # If Invoice Date exists, overwrite cells with TODAY() so it's a true Excel date
+            if date_idx is not None:
+                for r in range(len(araho)):
+                    ws.write_formula(r + 1, date_idx, "=TODAY()", date_fmt)
 
-        # Set formats + widths (text for all except date col)
-        for i, col in enumerate(araho_cols):
-            fmt = date_fmt if i == date_idx else text_fmt
-            max_len = max([len(str(col))] + [len(str(v)) for v in df_araho[col].astype(str).tolist()] or [0])
-            ws.set_column(i, i, min(max_len + 2, 60), fmt)
-
-        # Overwrite the date column cells with =TODAY() formulas (data starts at row 2 in Excel)
-        for r in range(len(df_araho)):
-            ws.write_formula(r + 1, date_idx, "=TODAY()", date_fmt)
-
-        ws.freeze_panes(1, 0)
+            ws.freeze_panes(1, 0)
 
         # ----- Other sheets -----
+        # These DataFrames already have correct numeric dtypes from your pipeline;
+        # pandas will write numeric dtypes as Excel numbers automatically.
         baby_flip_df.to_excel(writer, sheet_name="RD master", index=False)
         baby_flip_df_cleaned.to_excel(writer, sheet_name="RD clean", index=False)
         baby_flip_df_cleaned_pivot.to_excel(writer, sheet_name="Last Level Master", index=False)
 
         # ----- PO# (headerless) -----
-        po_df.to_excel(writer, sheet_name="PO#", index=False, header=False)
+        # Make 'Store' numeric if present to avoid the green triangles in this sheet
+        po_tmp = po_df.copy()
+        po_store = next((c for c in po_tmp.columns if str(c).strip().lower() == "store"), None)
+        if po_store is not None:
+            po_tmp[po_store] = _to_numeric_if_possible(po_tmp[po_store])
+        po_tmp.to_excel(writer, sheet_name="PO#", index=False, header=False)
+
+        # autosize for PO#
         ws_po = writer.sheets["PO#"]
-        for i, col in enumerate(po_df.columns):
-            try: content_len = int(po_df[col].astype(str).map(len).max() or 0)
-            except Exception: content_len = 0
+        for i, col in enumerate(po_tmp.columns):
+            try:
+                content_len = int(po_tmp[col].astype(str).map(len).max() or 0)
+            except Exception:
+                content_len = 0
             ws_po.set_column(i, i, min(content_len + 2, 60))
 
         # ----- carriers (headerless) -----
-        carrier_df.to_excel(writer, sheet_name="carriers", index=False, header=False)
+        car_tmp = carrier_df.copy()
+        car_store = next((c for c in car_tmp.columns if str(c).strip().lower() == "store"), None)
+        car_code  = next((c for c in car_tmp.columns if str(c).strip().lower().replace("_"," ") == "carrier code"), None)
+        if car_store is not None:
+            car_tmp[car_store] = _to_numeric_if_possible(car_tmp[car_store])
+        if car_code is not None:
+            car_tmp[car_code] = _to_numeric_if_possible(car_tmp[car_code])
+
+        car_tmp.to_excel(writer, sheet_name="carriers", index=False, header=False)
+
+        # autosize for carriers
         ws_car = writer.sheets["carriers"]
-        for i, col in enumerate(carrier_df.columns):
-            try: content_len = int(carrier_df[col].astype(str).map(len).max() or 0)
-            except Exception: content_len = 0
+        for i, col in enumerate(car_tmp.columns):
+            try:
+                content_len = int(car_tmp[col].astype(str).map(len).max() or 0)
+            except Exception:
+                content_len = 0
             ws_car.set_column(i, i, min(content_len + 2, 60))
 
     return path
-
