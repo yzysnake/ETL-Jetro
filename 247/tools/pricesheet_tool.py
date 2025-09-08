@@ -64,6 +64,7 @@ def build_price_sheet_long(cleaned_price_sheet_df: pd.DataFrame) -> pd.DataFrame
 
     Notes:
       - Drops rows where Cost is NaN.
+      - Post-processing: Store# 490 -> 498; remove Store# 457 and 453.
     """
     if "Item#" not in cleaned_price_sheet_df.columns:
         raise ValueError("Expected 'Item#' column in cleaned_price_sheet_df.")
@@ -89,6 +90,16 @@ def build_price_sheet_long(cleaned_price_sheet_df: pd.DataFrame) -> pd.DataFrame
 
     # Drop rows with no cost
     long_df = long_df.dropna(subset=["Cost"]).reset_index(drop=True)
+
+    # ---- Post-processing on Store# ----
+    # Normalize to string for safe comparison
+    long_df["Store#"] = long_df["Store#"].astype(str).str.strip()
+
+    # Replace 490 -> 498
+    long_df["Store#"] = long_df["Store#"].replace({"490": "498"})
+
+    # Filter out 457 and 453
+    long_df = long_df[~long_df["Store#"].isin(["457", "453"])].reset_index(drop=True)
 
     return long_df
 
