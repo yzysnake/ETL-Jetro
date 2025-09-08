@@ -25,7 +25,7 @@ def clean_acme_df(df: pd.DataFrame, file_name: str) -> pd.DataFrame:
     if ("il" in name_l) and ("fl" in name_l):
         raise ValueError("file_name contains both 'il' and 'fl' — ambiguous which dock filter to apply.")
     if "il" in name_l:
-        allowed_docks = {189}
+        allowed_docks = {189, 436}
     elif "fl" in name_l:
         allowed_docks = {407, 499}
     else:
