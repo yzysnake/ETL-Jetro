@@ -1,5 +1,6 @@
 import re
 import pandas as pd
+from typing import List
 
 def clean_allocation_df(allocation_df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -45,3 +46,65 @@ def clean_allocation_df(allocation_df: pd.DataFrame) -> pd.DataFrame:
         df = df.loc[:, keep_cols]
 
     return df
+
+
+def build_allocation_df_cleaned_pivot(cleaned_allocation_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Build long-form pivot:
+      - id: 'Item#'
+      - Branch: every other column
+      - value: 'Distro Size' (sum duplicates)
+      - Empty/NaN -> 0; values coerced to int
+      - Sort Branch ascending (numeric if possible)
+      - Columns order: Branch, Item#, Distro Size
+      - Rename Item# -> Item
+      - Finally, drop rows where Distro Size == 0
+    """
+    if "Item#" not in cleaned_allocation_df.columns:
+        raise ValueError("Expected 'Item#' column in cleaned_allocation_df.")
+
+    df = cleaned_allocation_df.copy()
+
+    branch_cols: List[str] = [c for c in df.columns if c != "Item#"]
+    if not branch_cols:
+        return pd.DataFrame(columns=["Branch", "Item", "Distro Size"])
+
+    long_df = df.melt(
+        id_vars=["Item#"],
+        value_vars=branch_cols,
+        var_name="Branch",
+        value_name="Distro Size",
+    )
+
+    # Normalize Branch header text
+    long_df["Branch"] = (
+        long_df["Branch"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+    )
+
+    # Coerce values -> numeric -> int, empty/NaN -> 0
+    long_df["Distro Size"] = (
+        pd.to_numeric(long_df["Distro Size"], errors="coerce")
+        .fillna(0)
+        .astype(int)
+    )
+
+    agg_df = (
+        long_df.groupby(["Branch", "Item#"], as_index=False)["Distro Size"]
+        .sum()
+    )
+
+    # Sort Branch numerically when possible
+    branch_num = pd.to_numeric(agg_df["Branch"], errors="coerce")
+    agg_df = (
+        agg_df.assign(_branch_num=branch_num)
+        .sort_values(by=["_branch_num", "Branch"])
+        .drop(columns="_branch_num")
+    )
+
+    # Reorder + rename
+    agg_df = agg_df.loc[:, ["Branch", "Item#", "Distro Size"]].rename(columns={"Item#": "Item"})
+
+    # Drop zero rows
+    agg_df = agg_df[agg_df["Distro Size"] != 0].reset_index(drop=True)
+
+    return agg_df
