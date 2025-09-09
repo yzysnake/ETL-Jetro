@@ -66,12 +66,15 @@ def build_acme_output(df: pd.DataFrame, edd: str, buyer: str = "P20", supplier: 
       - 'Expected Delivery Date' = edd (string like '9/15/2025', all rows)
       - 'WW Buyer' = buyer (all rows)
       - 'Warehouse','AdditionalXDCK','AmountCode','XDCK','POSTXDCK','FOB' = blank (all rows)
+    Then:
+      - For column 'Branch' (case-insensitive): if the cell is exactly two digits (e.g. '86'), change to three digits by prefixing '1' (-> '186').
     """
     if not isinstance(edd, str) or not edd.strip():
         raise ValueError("edd must be a non-empty string in date format like '9/15/2025'.")
 
     out = df.copy()
 
+    # Add required columns
     out["Supplier On Record"] = supplier
     out["Expected Delivery Date"] = edd
     out["WW Buyer"] = buyer
@@ -81,6 +84,18 @@ def build_acme_output(df: pd.DataFrame, edd: str, buyer: str = "P20", supplier: 
     out["XDCK"] = ""
     out["POSTXDCK"] = ""
     out["FOB"] = ""
+
+    # Fix Branch values (two digits -> prefix '1')
+    branch_col = next((c for c in out.columns if c.lower() == "branch"), None)
+    if branch_col is None:
+        raise ValueError("Column 'Branch' not found in the dataframe.")
+
+    # Work with strings to check digit count, then convert back to numeric if possible
+    s = out[branch_col].astype(str).str.strip()
+    mask_two_digits = s.str.fullmatch(r"\d{2}")
+    s.loc[mask_two_digits] = "1" + s.loc[mask_two_digits]
+    # Convert back to numeric where possible (keeps numbers as numbers for Excel)
+    out[branch_col] = pd.to_numeric(s)
 
     return out
 
