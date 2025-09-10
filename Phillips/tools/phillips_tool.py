@@ -108,3 +108,52 @@ def build_phillips_output(df: pd.DataFrame, edd: str, buyer: str = "P20", suppli
 
     return out
 
+def build_phillips_output_path(file_name: str, folder: str = "output_folder") -> Path:
+    path = Path(folder) / f" Mega Script {file_name}.xlsx"
+    return path
+
+CANONICAL_COLS = [
+    'Branch','Item','Description','Distro Size','Supplier On Record','Expected Delivery Date',
+    'WW Buyer','Warehouse','AdditionalXDCK','AmountCode','XDCK','POSTXDCK','FOB'
+]
+
+def write_phillips_output_excel(df: pd.DataFrame, path: str) -> None:
+    df = df.copy().reindex(columns=CANONICAL_COLS)
+
+    # numeric cols
+    for c in ['Branch','Item','Distro Size', 'Warehouse']:
+        df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0).astype(int)
+    for c in ['XDCK','FOB']:
+        df[c] = pd.to_numeric(df[c], errors='coerce')
+
+    # ensure real dates (accepts both 2- and 4-digit year strings)
+    if 'Expected Delivery Date' in df.columns:
+        df['Expected Delivery Date'] = pd.to_datetime(df['Expected Delivery Date'], errors='coerce').dt.date
+
+    # text -> blanks
+    for c in ['Supplier On Record','WW Buyer','AdditionalXDCK','AmountCode','POSTXDCK']:
+        df[c] = df[c].astype(object).where(df[c].notna(), "")
+
+    # sort
+    df = df.sort_values(by=['Branch','Item','Distro Size'], ascending=[True, True, True]).reset_index(drop=True)
+
+    # write workbook/sheets
+    with pd.ExcelWriter(path, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Scripting')
+        writer.book.create_sheet("ANOMALY")
+        writer.book.create_sheet("STORE CLUSTER")
+
+        # >>> Format the date column as m/d/yyyy (no leading zeros, 4-digit year)
+        ws = writer.book['Scripting']
+        date_col_idx = df.columns.get_loc('Expected Delivery Date') + 1
+        for r in range(2, ws.max_row + 1):
+            cell = ws.cell(row=r, column=date_col_idx)
+            if cell.value is not None:
+                cell.number_format = "m/d/yyyy"
+
+        # blank NaNs in XDCK/FOB
+        for name in ['XDCK','FOB']:
+            ci = df.columns.get_loc(name) + 1
+            for r in range(2, ws.max_row + 1):
+                if ws.cell(row=r, column=ci).value is None:
+                    ws.cell(row=r, column=ci).value = ""
