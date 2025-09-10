@@ -1,1 +1,0 @@
-Automation ETL for Bulky Buy
