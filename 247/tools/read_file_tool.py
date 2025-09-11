@@ -189,7 +189,7 @@ def retrieve_pdf(
     po_df: pd.DataFrame,
     output_folder: str | Path,
     *watch_folders: str | Path,
-    pdf_folder: Optional[str | Path] = "pdf_folder",   # can be a simple name OR a full path
+    pdf_folder: Optional[str | Path] = "pdf_folder",   # can be simple name OR full path
     po_col_candidates: Iterable[str] = ("PO #", "PO#", "PO_Number", "PO"),
     poll_interval: float = 5.0,
     settle_time: float = 3.0,
@@ -210,7 +210,9 @@ def retrieve_pdf(
           destination = <pdf_folder>  (used as-is; NOT joined with output_folder)
 
     The destination directory is created only if it does not already exist.
-    No other directories are created by this function.
+    Also:
+      - Pre-check destination to mark already-present PO PDFs as done.
+      - Initial sweep of watch folders before entering the polling loop.
     """
     # ---- 1) Pick PO column
     po_col = next((c for c in po_col_candidates if c in po_df.columns), None)
@@ -230,7 +232,7 @@ def retrieve_pdf(
     if not target_pos:
         raise ValueError("No valid PO values found in po_df.")
 
-    # ---- 3) Resolve destination directory (NO double-creation)
+    # ---- 3) Resolve destination directory (NO extra nesting)
     output_folder = Path(output_folder)
 
     def is_simple_name(p: str | Path) -> bool:
@@ -242,11 +244,9 @@ def retrieve_pdf(
     else:
         pdf_folder = Path(pdf_folder)
         if pdf_folder.is_absolute() or not is_simple_name(pdf_folder):
-            # Treat as full path; do NOT join with output_folder
-            dest_dir = Path(pdf_folder)
+            dest_dir = Path(pdf_folder)           # use as-is
         else:
-            # Simple folder name → join to output_folder
-            dest_dir = output_folder / pdf_folder
+            dest_dir = output_folder / pdf_folder # join to output_folder
 
     # Create ONLY the destination dir (and its parents) if missing
     if not dest_dir.exists():
@@ -300,10 +300,28 @@ def retrieve_pdf(
                 t0 = time.time()
         return True
 
-    # ---- 8) Main loop
-    start = time.time()
-    remaining = set(target_pos)
+    # ---- 8) PRE-CHECK: mark POs already present in destination as done
+    try:
+        for existing in dest_dir.iterdir():
+            if not existing.is_file() or not existing.name.lower().endswith(".pdf"):
+                continue
+            for po in target_pos:
+                if status.loc[status["PO"] == po, "status"].item() == "done":
+                    continue
+                if patterns[po].search(existing.name):
+                    i = idx_of(po)
+                    status.at[i, "found_path"] = str(existing)
+                    status.at[i, "moved_to"] = str(existing)
+                    status.at[i, "status"] = "done"
+                    status.at[i, "finished_at"] = datetime.now().isoformat(timespec="seconds")
+                    break
+    except Exception as e:
+        if verbose:
+            print(f"[WARN] Destination pre-check failed: {e}")
 
+    remaining = set(status.loc[status["status"] != "done", "PO"].tolist())
+
+    # Helper for logging
     def print_progress():
         if not verbose:
             return
@@ -317,6 +335,94 @@ def retrieve_pdf(
 
     print_progress()
 
+    # ---- 9) INITIAL SWEEP: move any already-existing matches in watch folders
+    def sweep_once():
+        nonlocal remaining
+        any_found = False
+        for wd in watch_dirs:
+            if not wd.exists() or not wd.is_dir():
+                continue
+            try:
+                for entry in wd.iterdir():
+                    if not entry.is_file() or not entry.name.lower().endswith(".pdf"):
+                        continue
+                    # If this file is already in dest_dir (same path), skip
+                    if entry.parent.resolve() == dest_dir.resolve():
+                        continue
+
+                    for po in list(remaining):
+                        if patterns[po].search(entry.name):
+                            any_found = True
+                            i = idx_of(po)
+                            status.at[i, "found_path"] = str(entry)
+
+                            if verbose:
+                                print(f"[HIT] (initial sweep) PO={po} at {entry}")
+                                print(f"      Waiting for stability: {settle_time}s")
+                            if not is_file_stable(entry, settle_time):
+                                if verbose:
+                                    print(f"[WARN] Unstable or vanished: {entry}")
+                                continue
+
+                            # If a same-named file already exists in destination, don't move; just mark done.
+                            dest = dest_dir / entry.name
+                            if dest.exists():
+                                status.at[i, "moved_to"] = str(dest)
+                                status.at[i, "status"] = "done"
+                                status.at[i, "finished_at"] = datetime.now().isoformat(timespec="seconds")
+                                remaining.discard(po)
+                                if verbose:
+                                    print(f"[SKIP MOVE] Already in destination: {dest} — marked done")
+                                break
+
+                            # Try to move
+                            ok = False
+                            last_err = None
+                            for _ in range(open_retry):
+                                try:
+                                    shutil.move(str(entry), str(dest))
+                                    ok = True
+                                    break
+                                except Exception as e:
+                                    last_err = e
+                                    time.sleep(open_retry_sleep)
+
+                            if not ok:
+                                if verbose:
+                                    print(f"[ERROR] Move failed: {entry} -> {dest} | {last_err}")
+                                continue
+
+                            status.at[i, "moved_to"] = str(dest)
+                            status.at[i, "status"] = "done"
+                            status.at[i, "finished_at"] = datetime.now().isoformat(timespec="seconds")
+                            remaining.discard(po)
+
+                            if verbose:
+                                print(f"[OK] Moved (initial sweep): {entry.name} -> {dest}")
+                            break
+            except PermissionError:
+                if verbose:
+                    print(f"[WARN] Permission denied (temporary): {wd}")
+            except FileNotFoundError:
+                if verbose:
+                    print(f"[WARN] Directory unavailable (temporary): {wd}")
+            except Exception as e:
+                if verbose:
+                    print(f"[WARN] Initial sweep error: {wd} | {e}")
+        return any_found
+
+    initial_found = sweep_once()
+    if initial_found and verbose:
+        print_progress()
+
+    # If everything is already satisfied, return early
+    if not remaining:
+        if verbose:
+            print(f"[DONE] All POs satisfied from destination and initial sweep. Output dir: {dest_dir}")
+        return status
+
+    # ---- 10) POLLING LOOP
+    start = time.time()
     while remaining:
         if max_wait_seconds is not None and (time.time() - start) > max_wait_seconds:
             if verbose:
@@ -333,6 +439,8 @@ def retrieve_pdf(
                 for entry in wd.iterdir():
                     if not entry.is_file() or not entry.name.lower().endswith(".pdf"):
                         continue
+                    if entry.parent.resolve() == dest_dir.resolve():
+                        continue
 
                     for po in list(remaining):
                         if patterns[po].search(entry.name):
@@ -348,17 +456,15 @@ def retrieve_pdf(
                                     print(f"[WARN] Unstable or vanished: {entry}")
                                 continue
 
-                            # Destination path INSIDE the resolved dest_dir (no extra nesting)
                             dest = dest_dir / entry.name
                             if dest.exists():
-                                stem, suffix = dest.stem, dest.suffix
-                                k = 1
-                                while True:
-                                    cand = dest_dir / f"{stem} ({k}){suffix}"
-                                    if not cand.exists():
-                                        dest = cand
-                                        break
-                                    k += 1
+                                status.at[i, "moved_to"] = str(dest)
+                                status.at[i, "status"] = "done"
+                                status.at[i, "finished_at"] = datetime.now().isoformat(timespec="seconds")
+                                remaining.discard(po)
+                                if verbose:
+                                    print(f"[SKIP MOVE] Already in destination: {dest} — marked done")
+                                break
 
                             ok = False
                             last_err = None
