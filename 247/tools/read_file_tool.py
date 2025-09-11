@@ -1,21 +1,28 @@
 from __future__ import annotations
-from zoneinfo import ZoneInfo
-from openpyxl import load_workbook
 import re
 import time
 import os
 import shutil
 from typing import Iterable, Optional
+from datetime import datetime
 from pathlib import Path
 import pandas as pd
-from datetime import datetime
+from openpyxl import load_workbook
+
 
 def read_allocation_pricesheet(folder: str = "put_your_excel_here"):
     """
     Returns
     -------
-    allocation_df : pd.DataFrame  (reads 'wed' if today is Wednesday (America/Chicago), else 'mon-fri')
-    price_sheet_df: pd.DataFrame  (reads 'script')
+    allocation_df : pd.DataFrame
+        The allocation workbook's default/active VISIBLE sheet (what opens first in Excel), raw (header=None).
+    price_sheet_df : pd.DataFrame
+        The price workbook's 'script' sheet, raw (header=None).
+
+    Notes
+    -----
+    - Requires one file whose name contains 'allocation' and one containing 'price' (case-insensitive).
+    - Temp/lock files like '~$*.xlsx' are ignored.
     """
     folder_path = Path(folder)
     if not folder_path.exists():
@@ -37,28 +44,23 @@ def read_allocation_pricesheet(folder: str = "put_your_excel_here"):
             f"price     : {getattr(price_path, 'name', None)}"
         )
 
-    # Pick allocation sheet name by weekday (America/Chicago)
-    tz = ZoneInfo("America/Chicago")
-    is_wed = datetime.now(tz).weekday() == 2  # Mon=0
-    alloc_sheet = "wed" if is_wed else "mon-fri"
-
-    # Validate tabs exist and are VISIBLE (ignore hidden/veryHidden/temp)
-    _assert_visible_sheet(alloc_path, alloc_sheet)
-    _assert_visible_sheet(price_path, "script")
-
-    # Read exactly those sheets (raw; you can clean downstream)
+    # Allocation: read the workbook's default (active) visible sheet
+    alloc_sheet = _get_active_visible_sheet_name(alloc_path)
     allocation_df  = pd.read_excel(alloc_path, sheet_name=alloc_sheet, header=None, engine="openpyxl")
+
+    # Price: read 'script'
+    _assert_visible_sheet(price_path, "script")
     price_sheet_df = pd.read_excel(price_path, sheet_name="script", header=None, engine="openpyxl")
 
     return allocation_df, price_sheet_df
 
 
 # -----------------------
-# Helpers (kept minimal)
+# Helpers
 # -----------------------
 
 def _find_excel_files(folder_path: Path):
-    """*.xlsx/*.xlsm/*.xls, exclude Office temp/lock files like '~$...xlsx'."""
+    """*.xlsx/*.xlsm/*.xls, excluding Office temp/lock files like '~$…'."""
     pats = ("*.xlsx", "*.xlsm", "*.xls")
     files = []
     for pat in pats:
@@ -78,6 +80,24 @@ def _visible_sheet_names(xlsx_path: Path):
     wb = load_workbook(filename=xlsx_path, read_only=True, data_only=True)
     try:
         return [ws.title for ws in wb.worksheets if getattr(ws, "sheet_state", "visible") == "visible"]
+    finally:
+        wb.close()
+
+def _get_active_visible_sheet_name(xlsx_path: Path) -> str:
+    """
+    Return the active sheet's name if it's visible; otherwise fall back to the
+    first visible sheet. Raise if none are visible.
+    """
+    wb = load_workbook(filename=xlsx_path, read_only=True, data_only=True)
+    try:
+        active = wb.active
+        if getattr(active, "sheet_state", "visible") == "visible":
+            return active.title
+        # Fallback: first visible sheet
+        for ws in wb.worksheets:
+            if getattr(ws, "sheet_state", "visible") == "visible":
+                return ws.title
+        raise ValueError(f"No visible sheets in {xlsx_path.name}.")
     finally:
         wb.close()
 
