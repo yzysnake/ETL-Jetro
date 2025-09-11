@@ -52,6 +52,8 @@ def clean_price_sheet_df(price_sheet_df: pd.DataFrame) -> pd.DataFrame:
 
     return df
 
+import pandas as pd
+
 def build_price_sheet_long(cleaned_price_sheet_df: pd.DataFrame) -> pd.DataFrame:
     """
     Convert cleaned_price_sheet_df from wide to long.
@@ -62,19 +64,18 @@ def build_price_sheet_long(cleaned_price_sheet_df: pd.DataFrame) -> pd.DataFrame
       - Vendor#: constant 81214
       - Cost:   cell value at (Item#, Store#)
 
-    Notes:
-      - Drops rows where Cost is NaN.
-      - Post-processing: Store# 490 -> 498; remove Store# 457 and 453.
+    Post-processing:
+      - Replace Store# 490 -> 498
+      - Remove Store# 457 and 453
+      - Drop rows where Cost is zero (handles numeric or string zeros)
     """
     if "Item#" not in cleaned_price_sheet_df.columns:
         raise ValueError("Expected 'Item#' column in cleaned_price_sheet_df.")
 
-    # All store columns are everything except 'Item#'
     store_cols = [c for c in cleaned_price_sheet_df.columns if c != "Item#"]
     if not store_cols:
         raise ValueError("No store columns found (expected columns besides 'Item#').")
 
-    # Melt wide -> long
     long_df = cleaned_price_sheet_df.melt(
         id_vars=["Item#"],
         value_vars=store_cols,
@@ -82,24 +83,23 @@ def build_price_sheet_long(cleaned_price_sheet_df: pd.DataFrame) -> pd.DataFrame
         value_name="Cost",
     )
 
-    # Add constant Vendor#
     long_df["Vendor#"] = 81214
-
-    # Reorder columns
     long_df = long_df[["Store#", "Item#", "Vendor#", "Cost"]]
-
-    # Drop rows with no cost
     long_df = long_df.dropna(subset=["Cost"]).reset_index(drop=True)
 
-    # ---- Post-processing on Store# ----
-    # Normalize to string for safe comparison
+    # Store# tweaks
     long_df["Store#"] = long_df["Store#"].astype(str).str.strip()
-
-    # Replace 490 -> 498
     long_df["Store#"] = long_df["Store#"].replace({"490": "498"})
-
-    # Filter out 457 and 453
     long_df = long_df[~long_df["Store#"].isin(["457", "453"])].reset_index(drop=True)
+
+    # Drop zero-cost rows (robust to strings like "0", "0.00", "$0")
+    cost_clean = (
+        long_df["Cost"].astype(str).str.strip()
+        .str.replace(",", "", regex=False)
+        .str.replace("$", "", regex=False)
+    )
+    cost_num = pd.to_numeric(cost_clean, errors="coerce")
+    long_df = long_df[(cost_num.notna()) & (cost_num != 0)].reset_index(drop=True)
 
     return long_df
 
