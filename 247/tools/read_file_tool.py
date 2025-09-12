@@ -14,14 +14,17 @@ def read_allocation_pricesheet(folder: str = "put_your_excel_here"):
     """
     Returns
     -------
-    allocation_df : pd.DataFrame
-        The allocation workbook's default/active VISIBLE sheet (what opens first in Excel), raw (header=None).
-    price_sheet_df : pd.DataFrame
-        The price workbook's 'script' sheet, raw (header=None).
+    allocation_df : pd.DataFrame | None
+        The allocation workbook's default/active VISIBLE sheet (what opens first in Excel),
+        raw (header=None). Returns None if not found.
+    price_sheet_df : pd.DataFrame | None
+        The price workbook's 'script' sheet, raw (header=None). Returns None if not found.
 
     Notes
     -----
-    - Requires one file whose name contains 'allocation' and one containing 'price' (case-insensitive).
+    - Accepts one or both files:
+        * One file whose name contains 'allocation'
+        * One file whose name contains 'price'
     - Temp/lock files like '~$*.xlsx' are ignored.
     """
     folder_path = Path(folder)
@@ -37,20 +40,28 @@ def read_allocation_pricesheet(folder: str = "put_your_excel_here"):
 
     alloc_path = _pick_file_by_keyword(excel_paths, "allocation")
     price_path = _pick_file_by_keyword(excel_paths, "price")
-    if alloc_path is None or price_path is None:
-        raise ValueError(
-            "Need one 'allocation' file and one 'price' file (case-insensitive).\n"
-            f"allocation: {getattr(alloc_path, 'name', None)}\n"
-            f"price     : {getattr(price_path, 'name', None)}"
+
+    allocation_df = None
+    price_sheet_df = None
+
+    if alloc_path is not None:
+        # Allocation: read the workbook's default (active) visible sheet
+        alloc_sheet = _get_active_visible_sheet_name(alloc_path)
+        allocation_df = pd.read_excel(
+            alloc_path, sheet_name=alloc_sheet, header=None, engine="openpyxl"
         )
 
-    # Allocation: read the workbook's default (active) visible sheet
-    alloc_sheet = _get_active_visible_sheet_name(alloc_path)
-    allocation_df  = pd.read_excel(alloc_path, sheet_name=alloc_sheet, header=None, engine="openpyxl")
+    if price_path is not None:
+        # Price: read 'script'
+        _assert_visible_sheet(price_path, "script")
+        price_sheet_df = pd.read_excel(
+            price_path, sheet_name="script", header=None, engine="openpyxl"
+        )
 
-    # Price: read 'script'
-    _assert_visible_sheet(price_path, "script")
-    price_sheet_df = pd.read_excel(price_path, sheet_name="script", header=None, engine="openpyxl")
+    if allocation_df is None and price_sheet_df is None:
+        raise ValueError(
+            "Neither 'allocation' nor 'price' file found (case-insensitive)."
+        )
 
     return allocation_df, price_sheet_df
 
