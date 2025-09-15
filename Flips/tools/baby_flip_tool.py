@@ -302,7 +302,40 @@ def build_baby_flip_output(baby_flip_df_cleaned_pivot: pd.DataFrame,
     out = out[cols_order]
 
     # ---------- sort by Store ascending ----------
-    out = out.sort_values(["Store"], ascending=True).reset_index(drop=True)
+    def _lot_last4(value):
+        """
+        Extract the last 4 digits of the LAST numeric chunk in LOT#.
+        Examples:
+          '498-68594 39024' -> 9024
+          'ABC 123'         -> 12
+          None / no digits  -> NaN (sorted last)
+        """
+        if pd.isna(value):
+            return pd.NA
+        s = str(value)
+        nums = re.findall(r'\d+', s)
+        if not nums:
+            return pd.NA
+        last_num = nums[-1]  # e.g., '39024'
+        last4 = last_num[-4:]  # e.g., '9024'
+        try:
+            return int(last4)
+        except ValueError:
+            return pd.NA
+
+    # ---------- sort by Store ascending, then LOT# by last 4 digits ----------
+    # (Keeps rows with missing/invalid LOT# at the end within each Store)
+    out = out.copy()
+    out["_lot_last4"] = out["LOT#"].apply(_lot_last4)
+
+    # If you want missing LOT# to sort last within each Store:
+    out["_lot_last4_sort"] = out["_lot_last4"].fillna(10 ** 9)
+
+    out = (
+        out.sort_values(["Store", "_lot_last4_sort"], ascending=[True, True])
+        .drop(columns=["_lot_last4", "_lot_last4_sort"])
+        .reset_index(drop=True)
+    )
 
     return out
 
