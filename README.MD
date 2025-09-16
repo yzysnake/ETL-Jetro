@@ -10,7 +10,7 @@
 
 ### Flips - Daily IBTs
 
-### Southern Cross
+### SouthernCross - SouthernCross
 
 ## How to use
 
@@ -35,4 +35,10 @@ conda activate basic_work_3135
 conda env config vars set CLIENT_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" TENANT_ID="yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy"
 conda deactivate
 conda activate basic_work_3135
+```
+OR add to system path globally
+
+```powershell
+setx CLIENT_ID "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+setx TENANT_ID "yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy"
 ```
