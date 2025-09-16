@@ -2,4 +2,5 @@ numpy
 pandas
 openpyxl
 PyPDF2
-pywin32
+msal
+requests
