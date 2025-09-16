@@ -28,7 +28,7 @@ cd work
 pip install -r requirements.txt
 ```
 
-### Add Azure Graph API to System Path -- option (Auto_email)
+### Add Azure Graph API to System Path -- Optional (Auto_email)
 
 ```bash
 conda activate basic_work_3135
