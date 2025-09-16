@@ -32,8 +32,10 @@ def clean_phillips_df(df: pd.DataFrame, file_name: str) -> pd.DataFrame:
         allowed_docks = {407}
     elif "189" in name_l:
         allowed_docks = {189}
+    elif "499" in name_l:
+        allowed_docks = {499}
     else:
-        raise ValueError("file_name must contain either '436' or '407' or '189' to decide dock filtering.")
+        raise ValueError("file_name must contain either '436' or '407' or '189' or '499' to decide dock filtering.")
 
     if "dock" not in df.columns:
         raise ValueError("'dock' column not found in the dataframe headers.")
