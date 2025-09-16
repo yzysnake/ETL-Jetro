@@ -95,6 +95,7 @@ def build_phillips_output(df: pd.DataFrame, edd: str, buyer: str = "P20", suppli
     out["XDCK"] = ""
     out["POSTXDCK"] = ""
     out["FOB"] = ""
+    out["XdockCode"] = ""
 
     # Fix Branch values (two digits -> prefix '1')
     branch_col = next((c for c in out.columns if c.lower() == "branch"), None)
@@ -116,7 +117,7 @@ def build_phillips_output_path(file_name: str, folder: str = "output_folder") ->
 
 CANONICAL_COLS = [
     'Branch','Item','Description','Distro Size','Supplier On Record','Expected Delivery Date',
-    'WW Buyer','Warehouse','AdditionalXDCK','AmountCode','XDCK','POSTXDCK','FOB'
+    'WW Buyer','Warehouse','AdditionalXDCK','AmountCode','XDCK','POSTXDCK','FOB', "XdockCode"
 ]
 
 def write_phillips_output_excel(df: pd.DataFrame, path: str) -> None:
@@ -125,7 +126,7 @@ def write_phillips_output_excel(df: pd.DataFrame, path: str) -> None:
     # numeric cols
     for c in ['Branch','Item','Distro Size', 'Warehouse']:
         df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0).astype(int)
-    for c in ['XDCK','FOB']:
+    for c in ['XDCK','FOB', "XdockCode"]:
         df[c] = pd.to_numeric(df[c], errors='coerce')
 
     # ensure real dates (accepts both 2- and 4-digit year strings)
