@@ -1,3 +1,5 @@
 .msal_token_cache.bin
 signature.html
 main.html
+/sheet_bot/service_account.json
+/sheet_bot/vendor_email_sheet.xlsx
