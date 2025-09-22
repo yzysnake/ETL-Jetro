@@ -47,7 +47,7 @@ WATCH_FOLDERS = [
     Path(r"\\10.1.12.17\PO_Share\P2E"),
     Path(r"\\10.1.12.17\PO_Share\P2M"),
     Path(r"\\10.1.12.17\PO_Share\P20"),
-    Path(r"\\10.1.12.17\PO_Share\P2Y"),
+    Path(r"\\10.1.12.17\PO_Share\P6Y")
 ]
 # ==============================================
 
