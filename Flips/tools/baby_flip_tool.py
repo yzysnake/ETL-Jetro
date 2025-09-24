@@ -422,7 +422,6 @@ def write_baby_flip_output_excel(
     # Identify columns by intended type
     # Text columns we should NOT force to numeric
     text_cols = set()
-    # typical names seen in your pipeline
     for cand in ["PO #", "description", "LOT#", invoice_date_col]:
         for c in araho.columns:
             if str(c).strip().lower() == cand.strip().lower():
@@ -469,14 +468,12 @@ def write_baby_flip_output_excel(
             ws.freeze_panes(1, 0)
 
         # ----- Other sheets -----
-        # These DataFrames already have correct numeric dtypes from your pipeline;
         # pandas will write numeric dtypes as Excel numbers automatically.
         baby_flip_df.to_excel(writer, sheet_name="RD master", index=False)
         baby_flip_df_cleaned.to_excel(writer, sheet_name="RD clean", index=False)
         baby_flip_df_cleaned_pivot.to_excel(writer, sheet_name="Last Level Master", index=False)
 
         # ----- PO# (headerless) -----
-        # Make 'Store' numeric if present to avoid the green triangles in this sheet
         po_tmp = po_df.copy()
         po_store = next((c for c in po_tmp.columns if str(c).strip().lower() == "store"), None)
         if po_store is not None:

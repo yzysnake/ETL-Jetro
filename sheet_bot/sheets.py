@@ -188,8 +188,6 @@ def batch_update_status(ws: gspread.Worksheet, updates: List[Tuple[str, str]]):
     data = [{"range": rng, "values": [[val]]} for (rng, val) in updates]
     ws.batch_update(data)
 
-# ---------- Convenience helpers for your tests ----------
-
 def build_po_tokens_for_ready(ws: gspread.Worksheet) -> List[Dict[str, Any]]:
     """
     For each row with Status == 'Ready', collect tokens:

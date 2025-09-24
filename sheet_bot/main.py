@@ -1,20 +1,17 @@
-# monitor.py
 from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Dict, List, Tuple
 import time
 import traceback
-import re
 import os
 import shutil
 from utils import now_chicago
 from import_vendor_email import load_recipients
-
-
-
-
+from email_generator import generate_body, combine_body_signature
+from email_sender import send_email_with_graph
 import sheets
+import re
 from utils import (
     STATUS_READY,
     STATUS_SENDING,
@@ -24,9 +21,6 @@ from utils import (
     retrieve_pdf,
     combine_pdf,
 )
-
-from email_generator import generate_body, combine_body_signature
-from email_sender import send_email_with_graph
 
 # =================== CONFIG ===================
 POLL_SECONDS = 60
@@ -54,7 +48,6 @@ WATCH_FOLDERS = [
 # delete outputs after successful email
 CLEANUP_AFTER_SEND = True
 
-import re  # ensure this import exists
 
 def _store_po_items_from_moves(moved_status_df) -> list[str]:
     """
@@ -285,7 +278,7 @@ def process_vendor_row(row: dict) -> Tuple[str, str, str]:
         print(f"[worker] Start vendor {vendor} at {status_a1}")
         print(f"[worker] Tokens: {_tokens_from_row(row)}")
 
-        # 0) Fail fast if no recipients configured (BEFORE touching any folders)
+        # Fail fast if no recipients configured (BEFORE touching any folders)
         recipients = _get_vendor_recipients(vendor)
         if not recipients["to"]:
             return status_a1, STATUS_ERROR, f"No recipients configured for vendor {vendor}"
